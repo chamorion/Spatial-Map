@@ -1,4 +1,4 @@
-classdef Rate_Matrix
+classdef Rate_Matrix < handle
     properties
         cell_id;
         time;
@@ -24,17 +24,36 @@ classdef Rate_Matrix
             rm.spk_y=rm.itp_y(rm.spk_time);
         end
         
-        % plot trajactory of the rat
-        function plot_trajactory(rm)
-            figure
-            hold on
-            title('trajactory')
-            legend('show')
-            plot(rm.x,rm.y,'b-','DisplayName','path of real data')
-            plot(rm.spk_x,rm.spk_y,'r.','DisplayName','spikes')
+        function rm = cal_rate_map(rm, bin_num)
+            delta_t = mean(diff(rm.time));
+            [hm_xy,x_edge,y_edge]=histcounts2(rm.x,rm.y,'NumBins',[bin_num, bin_num]);
+            hm_xy(hm_xy==0)=NaN;
+            hm_time=hm_xy*delta_t;
+            hm_spk=histcounts2(rm.spk_x,rm.spk_y,'XBinEdges',x_edge,'YBinEdges',y_edge);
+            rm.rate_map=hm_spk./hm_time;
         end
         
-        function cal_rate_map(rm)
+        % plot trajactory of the cell
+        function plot_trajactory(rm)
+            disp(rm.rate_map)
+            figure;
+            hold on;
+            title('trajactory');
+            legend('show');
+            plot(rm.x,rm.y,'b-','DisplayName','path of real data');
+            plot(rm.spk_x,rm.spk_y,'r.','DisplayName','spikes');
+        end
+        
+        % plot place field of the cell
+        function plot_rate_map(rm)
+            figure;
+            hold on;
+            title('place field');
+            hm=imagesc(flipud(rot90(rm.rate_map)));
+            set(gca,'YDir','normal');
+            colormap('turbo');
+            set(hm,'AlphaData',~isnan(hm.CData));
+            colorbar;
         end
     end
     
