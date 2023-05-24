@@ -41,6 +41,7 @@ classdef Rate_Matrix < handle
             sigma = min([delta_x, delta_y])/3;
             Gauss_K = @(v1, v2) exp(- (v1.^2 + v2.^2)/2*sigma^2);
             
+            t = min(rm.time) : delta_t : max(rm.time);
             p_x = @(t) rm.itp_x(t);
             p_y = @(t) rm.itp_y(t);
 
@@ -49,23 +50,23 @@ classdef Rate_Matrix < handle
             for s_x = min(rm.x) + delta_x/2 : delta_x : max(rm.x) - delta_x/2
                 i_y = 1;
                 for s_y = min(rm.y) + delta_y/2 : delta_y : max(rm.y) - delta_y/2
-                    rm.rate_map(i_x, i_y) = sum(Gauss_K(rm.spk_x - s_x, rm.spk_y - s_y))/sum(Gauss_K(p_x(rm.time) - s_x, p_y(rm.time) - s_y)*delta_t);
+                    rm.rate_map(i_x, i_y) = sum(Gauss_K(rm.spk_x - s_x, rm.spk_y - s_y))/trapz(Gauss_K(p_x(t) - s_x, p_y(t) - s_y));
                     i_y = i_y + 1;
                 end
                 i_x = i_x + 1;
             end
+            rm.rate_map = flipud(rot90(rm.rate_map));
             hm_xy=histcounts2(rm.x,rm.y,'NumBins',[bin_num, bin_num]);
             rm.rate_map(flipud(rot90(hm_xy)) == 0)=NaN;
         end
         
         % plot trajactory of the cell
         function plot_trajactory(rm)
-            disp(rm.rate_map)
             figure;
             hold on;
-            title('trajactory');
+            title(['trajactory of cell ',num2str(rm.cell_id)]);
             legend('show');
-            plot(rm.x,rm.y,'b-','DisplayName','path of real data');
+            plot(rm.x,rm.y,'b-','DisplayName','trajactory');
             plot(rm.spk_x,rm.spk_y,'r.','DisplayName','spikes');
         end
         
@@ -73,7 +74,7 @@ classdef Rate_Matrix < handle
         function plot_rate_map(rm)
             figure;
             hold on;
-            title('place field');
+            title(['place field of cell ',num2str(rm.cell_id)]);
             hm=imagesc(rm.rate_map);
             set(gca,'YDir','normal');
             colormap('turbo');
