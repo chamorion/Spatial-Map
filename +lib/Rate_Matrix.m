@@ -9,6 +9,9 @@ classdef Rate_Matrix < handle
         itp_y;
         spk_x;
         spk_y;
+        bin_num;
+        sp_info;
+        visits;
         rate_map;
         auto_corr_m;
     end
@@ -28,11 +31,18 @@ classdef Rate_Matrix < handle
         % naive rate map
         function rm = naive_rm(rm, bin_num)
             delta_t = mean(diff(rm.time));
-            [hm_xy,x_edge,y_edge]=histcounts2(rm.x,rm.y,'NumBins',[bin_num, bin_num]);
-            hm_xy(hm_xy<=1)=NaN;
-            hm_time=hm_xy*delta_t;
-            hm_spk=histcounts2(rm.spk_x,rm.spk_y,'XBinEdges',x_edge,'YBinEdges',y_edge);
-            rm.rate_map=flipud(rot90(hm_spk./hm_time));
+            
+            % 2D histogram of visit times in each bin
+            [rm.visits, x_edge,y_edge] = histcounts2(rm.x, rm.y, 'NumBins', [bin_num, bin_num]);
+            rm.visits = flipud(rot90(rm.visits));
+            
+            occp_time = rm.visits*delta_t;
+            spk_in_bin = histcounts2(rm.spk_x,rm.spk_y,'XBinEdges',x_edge,'YBinEdges',y_edge);
+            rm.rate_map = spk_in_bin./occp_time;
+            
+            % spatial information of the cell
+            occp_prob = occp_time/(max(rm.time) - min(rm.time));
+            rm.sp_info = sum(occp_prob.*rm.rate_map.*log2(rm.rate_map/mean(rm.rate_map,'all')),'all');
         end              
         
         % spatial-smoothed rate map based on Gaussian kernel
@@ -48,28 +58,26 @@ classdef Rate_Matrix < handle
             t = min(rm.time) : delta_t : max(rm.time);
             p_x = @(t) rm.itp_x(t);
             p_y = @(t) rm.itp_y(t);
-            
+                
             % spatial-smoothed rate map
-            rm.rate_map = zeros(bin_num, bin_num);
-            i_x = 1;
-            for s_x = min(rm.x) + delta_x/2 : delta_x : max(rm.x) - delta_x/2
-                i_y = 1;
-                for s_y = min(rm.y) + delta_y/2 : delta_y : max(rm.y) - delta_y/2
-                    rm.rate_map(i_x, i_y) = sum(Gauss_K(rm.spk_x - s_x, rm.spk_y - s_y))/trapz(Gauss_K(p_x(t) - s_x, p_y(t) - s_y));
-                    i_y = i_y + 1;
-                end
-                i_x = i_x + 1;
-            end
-            rm.rate_map = flipud(rot90(rm.rate_map));
+            s_x = min(rm.x) + delta_x/2 : delta_x : max(rm.x) - delta_x/2;
+            s_y = min(rm.y) + delta_y/2 : delta_y : max(rm.y) - delta_y/2;
+            [S_x, S_y] = meshgrid(s_x, s_y);
+            rm.rate_map = arrayfun(@(x, y) sum(Gauss_K(rm.spk_x - x, rm.spk_y - y))/trapz(Gauss_K(p_x(t) - x, p_y(t) - y)), S_x, S_y);
             
-            % drop off unvisted bin
-%             hm_xy=histcounts2(rm.x,rm.y,'NumBins',[bin_num, bin_num]);
-%             rm.rate_map(flipud(rot90(hm_xy)) <= 0)=NaN;
+            % 2D histogram of visit times in each bin
+            rm.visits = flipud(rot90(histcounts2(rm.x, rm.y, 'NumBins', [bin_num, bin_num])));
+            
+            % spatial information of the cell
+            occp_prob = rm.visits*delta_t/(max(rm.time) - min(rm.time));
+            rm.sp_info = sum(occp_prob.*rm.rate_map.*log2(rm.rate_map/mean(rm.rate_map,'all')),'all');
         end
         
+        % autocorrelogram of rate map
         function rm = cal_auto_corr(rm)
             rm.auto_corr_m = lib.Rate_Matrix.cross_corr(rm.rate_map, rm.rate_map);
         end
+        
     end
     
     methods (Static)
@@ -120,14 +128,25 @@ classdef Rate_Matrix < handle
         end
         
         % plot place field of the cell
-        function plot_rate_map(rm)
+        function plot_rate_map(rm, plt_unvisited)
+            if nargin < 2
+                plt_unvisited = false;
+            end
+            
+            rate_map = rm.rate_map;
+            if plt_unvisited
+                rate_map(rm.visits <= 0) = NaN;
+            end
+            
             figure;
             hold on;
-            title(['place field of cell ',num2str(rm.cell_id)]);
-            hm=imagesc(rm.rate_map);
+            title(['place field of cell ',num2str(rm.cell_id),', spatial information: ', num2str(rm.sp_info,'%.4f')]);
+            heat_map = imagesc(rate_map);
             set(gca,'YDir','normal');
             colormap('turbo');
-            set(hm,'AlphaData',~isnan(hm.CData));
+            
+            % set NaN value to be white
+            set(heat_map,'AlphaData',~isnan(heat_map.CData));
             colorbar;
         end
         
