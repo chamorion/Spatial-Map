@@ -11,7 +11,10 @@ classdef Rate_Matrix < handle
         spk_y;
         bin_num;
         sp_info;
+        coherence;
+        sparsity;
         visits;
+        unsmoothed;
         rate_map;
         auto_corr_m;
     end
@@ -26,30 +29,28 @@ classdef Rate_Matrix < handle
             rm.itp_y=griddedInterpolant(rm.time,rm.y);
             rm.spk_x=rm.itp_x(rm.spk_time);
             rm.spk_y=rm.itp_y(rm.spk_time);
-        end
-        
-        % naive rate map
-        function rm = naive_rm(rm, bin_num)
-            delta_t = mean(diff(rm.time));
-            
-            % 2D histogram of visit times in each bin
-            [rm.visits, x_edge,y_edge] = histcounts2(rm.x, rm.y, 'NumBins', [bin_num, bin_num]);
-            rm.visits = flipud(rot90(rm.visits));
-            
-            occp_time = rm.visits*delta_t;
-            spk_in_bin = histcounts2(rm.spk_x,rm.spk_y,'XBinEdges',x_edge,'YBinEdges',y_edge);
-            rm.rate_map = spk_in_bin./occp_time;
-            
-            % spatial information of the cell
-            occp_prob = occp_time/(max(rm.time) - min(rm.time));
-            rm.sp_info = sum(occp_prob.*rm.rate_map.*log2(rm.rate_map/mean(rm.rate_map,'all')),'all');
-        end              
+        end        
         
         % spatial-smoothed rate map based on Gaussian kernel
         function rm = gauss_rm(rm, bin_num)
             delta_x = (max(rm.x) - min(rm.x))/bin_num;
             delta_y = (max(rm.y) - min(rm.y))/bin_num;
             delta_t = mean(diff(rm.time));
+            
+            % 2D histogram of visit times in each bin
+            [rm.visits, x_edge,y_edge] = histcounts2(rm.x, rm.y, 'NumBins', [bin_num, bin_num]);
+            rm.visits = flipud(rot90(rm.visits));
+            
+            % unsmoothed rate map
+            occp_time = rm.visits*delta_t;
+            spk_in_bin = flipud(rot90(histcounts2(rm.spk_x,rm.spk_y,'XBinEdges',x_edge,'YBinEdges',y_edge)));
+            rm.unsmoothed = spk_in_bin./occp_time;
+            rm.unsmoothed(isnan(rm.unsmoothed)) = 0; 
+            
+            % coherence based on Fisher-z transform
+            autocorr1 = lib.Rate_Matrix.cross_corr(rm.unsmoothed, rm.unsmoothed, 'stride', [bin_num - 1,bin_num - 1]);
+            r = (sum(autocorr1, 'all') - 1)/8;
+            rm.coherence = 0.5*log((1+r)/(1-r));
             
             % gaussian kernel
             sigma = min([delta_x, delta_y])/3;
@@ -65,17 +66,17 @@ classdef Rate_Matrix < handle
             [S_x, S_y] = meshgrid(s_x, s_y);
             rm.rate_map = arrayfun(@(x, y) sum(Gauss_K(rm.spk_x - x, rm.spk_y - y))/trapz(Gauss_K(p_x(t) - x, p_y(t) - y)), S_x, S_y);
             
-            % 2D histogram of visit times in each bin
-            rm.visits = flipud(rot90(histcounts2(rm.x, rm.y, 'NumBins', [bin_num, bin_num])));
-            
             % spatial information of the cell
-            occp_prob = rm.visits*delta_t/(max(rm.time) - min(rm.time));
+            occp_prob = occp_time/(max(rm.time) - min(rm.time));
             rm.sp_info = sum(occp_prob.*rm.rate_map.*log2(rm.rate_map/mean(rm.rate_map,'all')),'all');
+            
+            % sparsity of the cell
+            rm.sparsity = mean(rm.rate_map,'all')^2/sum(occp_prob.*rm.rate_map.^2, 'all');
         end
         
         % autocorrelogram of rate map
         function rm = cal_auto_corr(rm)
-            rm.auto_corr_m = lib.Rate_Matrix.cross_corr(rm.rate_map, rm.rate_map);
+            rm.auto_corr_m = lib.Rate_Matrix.cross_corr(rm.rate_map, rm.rate_map, 'shape', 'same');
         end
         
     end
@@ -112,9 +113,20 @@ classdef Rate_Matrix < handle
         end
         
         % cross correlation matrix of 2 rate matrix
-        function corr_m = cross_corr(rm1, rm2)
-            flp_rm2 = flip(flip(rm2,2));
-            corr_m = conv2(rm1, flp_rm2,'same')/sqrt(sum(rm1.^2,'all')*sum(rm2.^2,'all'));
+        function corr_m = cross_corr(rm1, rm2, varargin)
+            defaultShape = 'full';
+            defaultStride = [1,1];
+            
+            p = inputParser;
+            addRequired(p, 'rm1');
+            addRequired(p, 'rm2');
+            addParameter(p, 'shape', defaultShape);
+            addParameter(p, 'stride', defaultStride);
+            parse(p, rm1, rm2, varargin{:});
+            
+            flp_rm2 = flip(flip(p.Results.rm2,2));
+            corr_m = conv2(p.Results.rm1, flp_rm2, p.Results.shape)/sqrt(sum(p.Results.rm1.^2,'all')*sum(p.Results.rm2.^2,'all'));
+            corr_m = corr_m(1:p.Results.stride(1):end,1:p.Results.stride(2):end);
         end
         
         % plot trajactory of the cell
@@ -128,19 +140,29 @@ classdef Rate_Matrix < handle
         end
         
         % plot place field of the cell
-        function plot_rate_map(rm, plt_unvisited)
-            if nargin < 2
-                plt_unvisited = false;
+        function plot_rate_map(rm, varargin)
+            defautlPltUnvisited = false;
+            defaultPltUnsmoothed = false;
+            
+            p = inputParser;
+            addRequired(p, 'rm')
+            addParameter(p, 'plt_unvisited', defautlPltUnvisited);
+            addParameter(p, 'plt_unsmoothed', defaultPltUnsmoothed);
+            parse(p, rm, varargin{:});
+            
+            if p.Results.plt_unsmoothed
+                rate_map = p.Results.rm.unsmoothed;
+            else
+                rate_map = p.Results.rm.rate_map;
             end
             
-            rate_map = rm.rate_map;
-            if plt_unvisited
-                rate_map(rm.visits <= 0) = NaN;
+            if p.Results.plt_unvisited
+                rate_map(p.Results.rm.visits <= 0) = NaN;
             end
             
             figure;
             hold on;
-            title(['place field of cell ',num2str(rm.cell_id),', spatial information: ', num2str(rm.sp_info,'%.4f')]);
+            title(['place field of cell ',num2str(p.Results.rm.cell_id),'; SI: ', num2str(p.Results.rm.sp_info,'%.4f'), ', SP: ', num2str(p.Results.rm.sparsity, '%.4f'), ', CH: ', num2str(p.Results.rm.coherence, '%.4f')]);
             heat_map = imagesc(rate_map);
             set(gca,'YDir','normal');
             colormap('turbo');
