@@ -48,7 +48,8 @@ classdef Rate_Matrix < handle
             rm.unsmoothed(isnan(rm.unsmoothed)) = 0; 
             
             % coherence based on Fisher-z transform
-            autocorr1 = lib.Rate_Matrix.cross_corr(rm.unsmoothed, rm.unsmoothed, 'stride', [bin_num - 1,bin_num - 1]);
+            padded_unsm = padarray(rm.unsmoothed,[1,1], 0 , 'both');
+            autocorr1 = lib.Rate_Matrix.cross_corr(padded_unsm, rm.unsmoothed, 'shape', 'valid');
             r = (sum(autocorr1, 'all') - 1)/8;
             rm.coherence = 0.5*log((1+r)/(1-r));
             
