@@ -46,10 +46,10 @@ classdef Rate_Matrix < handle
             spk_in_bin = flipud(rot90(histcounts2(rm.spk_x,rm.spk_y,'XBinEdges',x_edge,'YBinEdges',y_edge)));
             rm.unsmoothed = spk_in_bin./occp_time;
             rm.unsmoothed(isnan(rm.unsmoothed)) = 0; 
+            rm.unsmoothed(isinf(rm.unsmoothed)) = 0;
             
             % coherence based on Fisher-z transform
-            padded_unsm = padarray(rm.unsmoothed,[1,1], 0 , 'both');
-            autocorr1 = lib.Rate_Matrix.cross_corr(padded_unsm, rm.unsmoothed, 'shape', 'valid');
+            autocorr1 = lib.Rate_Matrix.norm_cross_corr(rm.unsmoothed, rm.unsmoothed, 3, 3);
             r = (sum(autocorr1, 'all') - 1)/8;
             rm.coherence = 0.5*log((1+r)/(1-r));
             
@@ -77,7 +77,8 @@ classdef Rate_Matrix < handle
         
         % autocorrelogram of rate map
         function rm = cal_auto_corr(rm)
-            rm.auto_corr_m = lib.Rate_Matrix.cross_corr(rm.rate_map, rm.rate_map, 'shape', 'same');
+            [m, n] = size(rm.rate_map);
+            rm.auto_corr_m = lib.Rate_Matrix.norm_cross_corr(rm.rate_map, rm.rate_map, m - mod(m+1,2), n - mod(n+1,2));
         end
         
     end
@@ -113,21 +114,13 @@ classdef Rate_Matrix < handle
             time = time - min(time);
         end
         
-        % cross correlation matrix of 2 rate matrix
-        function corr_m = cross_corr(rm1, rm2, varargin)
-            defaultShape = 'full';
-            defaultStride = [1,1];
-            
-            p = inputParser;
-            addRequired(p, 'rm1');
-            addRequired(p, 'rm2');
-            addParameter(p, 'shape', defaultShape);
-            addParameter(p, 'stride', defaultStride);
-            parse(p, rm1, rm2, varargin{:});
-            
-            flp_rm2 = flip(flip(p.Results.rm2,2));
-            corr_m = conv2(p.Results.rm1, flp_rm2, p.Results.shape)/sqrt(sum(p.Results.rm1.^2,'all')*sum(p.Results.rm2.^2,'all'));
-            corr_m = corr_m(1:p.Results.stride(1):end,1:p.Results.stride(2):end);
+        % normalized cross correlation matrix of 2 rate matrix
+        function xcorr_m = norm_cross_corr(rm1, rm2, m, n)
+            xcorr_m = normxcorr2(rm1, rm2);
+            [rows, cols] = size(xcorr_m);
+            center_rows = floor(rows / 2) - floor(m / 2) + (1:m);
+            center_cols = floor(cols / 2) - floor(n / 2) + (1:n);
+            xcorr_m = xcorr_m(center_rows, center_cols);
         end
         
         % plot trajactory of the cell
