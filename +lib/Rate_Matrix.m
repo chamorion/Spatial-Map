@@ -34,6 +34,7 @@ classdef Rate_Matrix < handle
         
         % spatial-smoothed rate map based on Gaussian kernel
         function rm = gauss_rm(rm, bin_num)
+            rm.bin_num = bin_num;
             delta_x = (max(rm.x) - min(rm.x))/bin_num;
             delta_y = (max(rm.y) - min(rm.y))/bin_num;
             delta_t = mean(diff(rm.time));
