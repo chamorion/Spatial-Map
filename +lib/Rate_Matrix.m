@@ -16,6 +16,7 @@ classdef Rate_Matrix < handle
         visits;
         unsmoothed;
         rate_map;
+        is_pf;
         auto_corr_m;
     end
         
@@ -49,7 +50,7 @@ classdef Rate_Matrix < handle
             rm.unsmoothed(isinf(rm.unsmoothed)) = 0;
             
             % coherence based on Fisher-z transform
-            autocorr1 = lib.Rate_Matrix.norm_cross_corr(rm.unsmoothed, rm.unsmoothed, 3, 3);
+            autocorr1 = lib.Rate_Matrix.norm_cross_corr(rm.unsmoothed, rm.unsmoothed, 'window_size', [3, 3]);
             r = (sum(autocorr1, 'all') - 1)/8;
             rm.coherence = 0.5*log((1+r)/(1-r));
             
@@ -67,6 +68,9 @@ classdef Rate_Matrix < handle
             [S_x, S_y] = meshgrid(s_x, s_y);
             rm.rate_map = arrayfun(@(x, y) sum(Gauss_K(rm.spk_x - x, rm.spk_y - y))/trapz(Gauss_K(p_x(t) - x, p_y(t) - y)), S_x, S_y);
             
+            % determined place field
+            rm.is_pf = lib.Rate_Matrix.bw_mask(rm.rate_map, 0.2*max(rm.rate_map,[], 'all'), 100);
+            
             % spatial information of the cell
             occp_prob = occp_time/(max(rm.time) - min(rm.time));
             rm.sp_info = sum(occp_prob.*rm.rate_map.*log2(rm.rate_map/mean(rm.rate_map,'all')),'all');
@@ -78,7 +82,9 @@ classdef Rate_Matrix < handle
         % autocorrelogram of rate map
         function rm = cal_auto_corr(rm)
             [m, n] = size(rm.rate_map);
-            rm.auto_corr_m = lib.Rate_Matrix.norm_cross_corr(rm.rate_map, rm.rate_map, m - mod(m+1,2), n - mod(n+1,2));
+            
+            % set center window [m,n] to be [max odd number <= m, max odd number <= n]
+            rm.auto_corr_m = lib.Rate_Matrix.norm_cross_corr(rm.rate_map, rm.rate_map, 'window_size', [m - mod(m+1,2), n - mod(n+1,2)]);
         end
         
     end
@@ -113,13 +119,35 @@ classdef Rate_Matrix < handle
             spk_time = spk_time - min(time);
             time = time - min(time);
         end
+
+        % masking a binarized matrix
+        function masked_m = bw_mask(matrix, threshold, least_num)
+            % masking value lower than given threshold 
+            masked_m = matrix >= threshold;
+            
+            % masking connected component less than given number
+            CC = bwconncomp(masked_m, 4);
+            invld_bin = cell2mat((CC.PixelIdxList(cellfun('length', CC.PixelIdxList) <= least_num)).');
+            
+            masked_m(invld_bin) = 0;
+        end
         
         % normalized cross correlation matrix of 2 rate matrix
-        function xcorr_m = norm_cross_corr(rm1, rm2, m, n)
-            xcorr_m = normxcorr2(rm1, rm2);
+        function xcorr_m = norm_cross_corr(rm1, rm2, varargin)
+            defaultWindowSize = size(rm1) + size(rm2) - 1;
+            
+            p = inputParser;
+            addRequired(p, 'rm1');
+            addRequired(p, 'rm2');
+            addParameter(p, 'window_size', defaultWindowSize);
+            parse(p, rm1, rm2, varargin{:});
+            
+            xcorr_m = normxcorr2(p.Results.rm1, p.Results.rm2);
+            
+            % choose the m-rows n-cols submatrix in the center of xcorr_m
             [rows, cols] = size(xcorr_m);
-            center_rows = floor(rows / 2) - floor(m / 2) + (1:m);
-            center_cols = floor(cols / 2) - floor(n / 2) + (1:n);
+            center_rows = floor(rows / 2) - floor(p.Results.window_size(1) / 2) + (1:p.Results.window_size(1));
+            center_cols = floor(cols / 2) - floor(p.Results.window_size(2) / 2) + (1:p.Results.window_size(2));
             xcorr_m = xcorr_m(center_rows, center_cols);
         end
         
@@ -137,17 +165,23 @@ classdef Rate_Matrix < handle
         function plot_rate_map(rm, varargin)
             defautlPltUnvisited = false;
             defaultPltUnsmoothed = false;
+            defaultPltIsPF = false;
             
             p = inputParser;
-            addRequired(p, 'rm')
+            addRequired(p, 'rm');
             addParameter(p, 'plt_unvisited', defautlPltUnvisited);
             addParameter(p, 'plt_unsmoothed', defaultPltUnsmoothed);
+            addParameter(p, 'plt_is_pf', defaultPltIsPF);
             parse(p, rm, varargin{:});
             
             if p.Results.plt_unsmoothed
                 rate_map = p.Results.rm.unsmoothed;
             else
                 rate_map = p.Results.rm.rate_map;
+            end
+            
+            if p.Results.plt_is_pf
+               rate_map = rate_map.*p.Results.rm.is_pf;
             end
             
             if p.Results.plt_unvisited
