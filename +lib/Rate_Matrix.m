@@ -18,6 +18,7 @@ classdef Rate_Matrix < handle
         rate_map;
         is_pf;
         auto_corr_m;
+        periodicity;
     end
         
     methods
@@ -88,6 +89,39 @@ classdef Rate_Matrix < handle
             rm.auto_corr_m = lib.Rate_Matrix.norm_cross_corr(rm.rate_map, rm.rate_map, 'window_size', [m - mod(m+1,2), n - mod(n+1,2)]);
         end
         
+        % spatial periodicity of autocorrelogram
+        function rm = cal_periodicity(rm)
+            % map autocorrelogram to actual coordinates
+            [m, n] = size(rm.rate_map);
+            delta_x = (max(rm.x) - min(rm.x)) / (m - mod(m+1,2));
+            delta_y = (max(rm.y) - min(rm.y)) / (n - mod(n+1,2));
+            prog_x = (min(rm.x) - max(rm.x) + delta_x)/2 : delta_x : (max(rm.x) - min(rm.x) - delta_x)/2;
+            prog_y = (min(rm.y) - max(rm.y) + delta_y)/2 : delta_y : (max(rm.y) - min(rm.y) - delta_y)/2;
+            
+            % gridded interpolant function of autocorrelogram
+            Z = rm.auto_corr_m;
+            [X, Y] = ndgrid(prog_x, prog_y);
+            F = griddedInterpolant(X, Y, Z);
+            
+            % divide the autocorrelogram into 360 degree
+            % seperate each direction under fixed frequency
+            sample_freq = 100;
+            delta_rh = min([max(prog_x), max(prog_y)])/sample_freq;
+            th = 0 : pi/180 : 2*pi;
+            rh = 0 : delta_rh : min([max(prog_x), max(prog_y)]);
+            
+            % change polar grids into Cartesian grids and sampling
+            [Th, Rh] = ndgrid(th, rh);
+            [S_x, S_y] = pol2cart(Th, Rh);
+            S_z = F(S_x, S_y);
+            
+            % normalized spatial periodicity
+            xcov_Z = S_z * S_z';
+            for i = 1:361
+                xcov_Z(i,:) = circshift(xcov_Z(i,:), 1-i);
+            end
+            rm.periodicity = (sum(xcov_Z) - mean(S_z,'all')^2*length(th)*length(rh))/(sum(S_z.^2, 'all') - mean(S_z,'all')^2*length(th)*length(rh));
+        end
     end
     
     methods (Static)
@@ -211,6 +245,15 @@ classdef Rate_Matrix < handle
             colormap('turbo');
             set(hm,'AlphaData',~isnan(hm.CData));
             colorbar;
+        end
+        
+        % plot the periodicity of rm
+        function plot_periodicity(rm)
+            figure
+            hold on;
+            title(['periodicity of cell ',num2str(rm.cell_id)]);
+            xlabel('degree');
+            plot(0:360, rm.periodicity);
         end
         
     end
